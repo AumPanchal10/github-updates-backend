@@ -36,47 +36,25 @@ const transporter = nodemailer.createTransport({
 });
 
 // Fetch GitHub timeline data
-// Updated fetchGitHubTimeline function with proper error handling and auth
 async function fetchGitHubTimeline() {
   try {
-    // Option 1: Add GitHub token for higher rate limits (recommended)
-    const headers = {};
-    if (process.env.GITHUB_TOKEN) {
-      headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
-      headers['User-Agent'] = 'GitHub-Updates-App';
-    }
-
-    const response = await fetch('https://api.github.com/events/public?per_page=10', {
-      headers: headers
-    });
-
-    // Check rate limit headers
-    const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
-    const rateLimitReset = response.headers.get('X-RateLimit-Reset');
+    const response = await fetch('https://api.github.com/events/public?per_page=10');
     
-    console.log(`GitHub API Rate Limit - Remaining: ${rateLimitRemaining}, Reset: ${new Date(rateLimitReset * 1000)}`);
-
     if (!response.ok) {
       if (response.status === 403) {
-        console.error('GitHub API rate limit exceeded');
-        // Return mock data when rate limited
+        console.log('GitHub API rate limited, using mock data');
         return getMockGitHubEvents();
       }
-      throw new Error(`GitHub API error: ${response.status} - ${response.statusText}`);
+      throw new Error(`GitHub API error: ${response.status}`);
     }
-
-    const events = await response.json();
-    return events;
-  } catch (error) {
-    console.error('Error fetching GitHub timeline:', error);
     
-    // Fallback to mock data if API fails
-    console.log('Using mock GitHub data as fallback...');
+    return await response.json();
+  } catch (error) {
+    console.error('GitHub API failed, using mock data:', error);
     return getMockGitHubEvents();
   }
 }
 
-// Mock GitHub events for when API is unavailable
 function getMockGitHubEvents() {
   return [
     {
@@ -86,76 +64,13 @@ function getMockGitHubEvents() {
       created_at: new Date().toISOString()
     },
     {
-      type: 'CreateEvent',
+      type: 'CreateEvent', 
       actor: { login: 'coder456' },
       repo: { name: 'open-source/javascript-utils' },
-      created_at: new Date(Date.now() - 3600000).toISOString()
-    },
-    {
-      type: 'WatchEvent',
-      actor: { login: 'github_user' },
-      repo: { name: 'popular-repo/vue-components' },
-      created_at: new Date(Date.now() - 7200000).toISOString()
-    },
-    {
-      type: 'ForkEvent',
-      actor: { login: 'contributor' },
-      repo: { name: 'trending/python-tools' },
-      created_at: new Date(Date.now() - 10800000).toISOString()
-    },
-    {
-      type: 'PullRequestEvent',
-      actor: { login: 'maintainer' },
-      repo: { name: 'community/nodejs-api' },
-      created_at: new Date(Date.now() - 14400000).toISOString()
+      created_at: new Date().toISOString()
     }
+    // Add more mock events as needed
   ];
-}
-
-// Enhanced email sending with better error handling
-async function sendGitHubUpdate(email, githubData) {
-  try {
-    const emailContent = formatGitHubEvents(githubData);
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Your Daily GitHub Updates 🚀',
-      text: emailContent,
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">📊 GitHub Updates</h1>
-            <p style="color: #e0e7ff; margin: 10px 0 0 0; font-size: 16px;">Latest activities from the developer community</p>
-          </div>
-          
-          <div style="padding: 30px; background-color: #ffffff;">
-            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea;">
-              ${emailContent.split('\n').map(line => 
-                line.trim() ? `<p style="margin: 8px 0; color: #334155; font-size: 14px; line-height: 1.5;">${line}</p>` : ''
-              ).join('')}
-            </div>
-            
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center;">
-              <p style="color: #64748b; font-size: 12px; margin: 0;">
-                You're receiving this because you subscribed to GitHub updates.<br>
-                <a href="#" style="color: #667eea; text-decoration: none;">Unsubscribe</a> | 
-                <a href="https://github.com" style="color: #667eea; text-decoration: none;">Visit GitHub</a>
-              </p>
-            </div>
-          </div>
-        </div>
-      `
-    };
-
-    const result = await transporter.sendMail(mailOptions);
-    console.log(`Email sent successfully to ${email}:`, result.messageId);
-    return result;
-    
-  } catch (error) {
-    console.error(`Failed to send email to ${email}:`, error);
-    throw error;
-  }
 }
 
 // Format GitHub events for email
