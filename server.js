@@ -27,7 +27,7 @@ const supabase = createClient(
 );
 
 // Email transporter
-const transporter = nodemailer.createTransport({
+const transporter = nodemailer.createTransporter({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
@@ -35,13 +35,14 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Updated GitHub API functions with multiple endpoints and better error handling
-
+// CORRECTED: Updated GitHub API functions with better endpoints and error handling
 async function fetchGitHubTimeline() {
+  // More reliable endpoints that work consistently
   const endpoints = [
-    'https://api.github.com/events',  // Alternative endpoint
-    'https://api.github.com/events/public',
-    'https://api.github.com/users/github/events/public' // Fallback
+    'https://api.github.com/events',  // Global public events (requires auth for higher rate limits)
+    'https://api.github.com/users/github/events/public',  // GitHub's own events
+    'https://api.github.com/users/torvalds/events/public', // Linus Torvalds events (reliable fallback)
+    'https://api.github.com/users/gaearon/events/public',  // Dan Abramov events (React maintainer)
   ];
 
   for (let i = 0; i < endpoints.length; i++) {
@@ -53,39 +54,60 @@ async function fetchGitHubTimeline() {
         'Accept': 'application/vnd.github.v3+json'
       };
       
+      // Add authentication if token exists
       if (process.env.GITHUB_TOKEN) {
         headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+        console.log('✅ Using GitHub token for authentication');
+      } else {
+        console.log('⚠️ No GitHub token found, using anonymous requests (limited rate)');
       }
 
       const response = await fetch(`${endpoints[i]}?per_page=10`, {
         headers: headers
       });
       
-      // Log rate limit info
+      // Log detailed rate limit info
       const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
       const rateLimitReset = response.headers.get('X-RateLimit-Reset');
-      console.log(`GitHub API Rate Limit - Remaining: ${rateLimitRemaining}, Reset: ${rateLimitReset ? new Date(rateLimitReset * 1000).toISOString() : 'N/A'}`);
+      const rateLimitLimit = response.headers.get('X-RateLimit-Limit');
+      
+      console.log(`GitHub API Rate Limit - Limit: ${rateLimitLimit}, Remaining: ${rateLimitRemaining}, Reset: ${rateLimitReset ? new Date(rateLimitReset * 1000).toISOString() : 'N/A'}`);
       
       if (response.ok) {
         const events = await response.json();
-        console.log(`Successfully fetched ${events.length} GitHub events from endpoint ${i + 1}`);
-        return events;
+        console.log(`✅ Successfully fetched ${events.length} real GitHub events from endpoint ${i + 1}`);
+        
+        // Filter for interesting event types
+        const filteredEvents = events.filter(event => 
+          ['PushEvent', 'CreateEvent', 'WatchEvent', 'ForkEvent', 'PullRequestEvent', 'IssuesEvent', 'ReleaseEvent'].includes(event.type)
+        );
+        
+        return filteredEvents.length > 0 ? filteredEvents : events;
       } else {
-        console.log(`Endpoint ${i + 1} failed with status: ${response.status} - ${response.statusText}`);
+        console.log(`❌ Endpoint ${i + 1} failed with status: ${response.status} - ${response.statusText}`);
         
         if (response.status === 403) {
-          console.log('Rate limited, trying next endpoint...');
+          const resetTime = response.headers.get('X-RateLimit-Reset');
+          if (resetTime) {
+            console.log(`⏰ Rate limit will reset at: ${new Date(resetTime * 1000).toISOString()}`);
+          }
+          console.log('🔄 Rate limited, trying next endpoint...');
+          continue;
+        }
+        
+        if (response.status === 401) {
+          console.log('🔐 Authentication failed - check your GITHUB_TOKEN environment variable');
           continue;
         }
       }
     } catch (error) {
-      console.error(`Error with endpoint ${i + 1}:`, error.message);
+      console.error(`❌ Error with endpoint ${i + 1}:`, error.message);
       continue;
     }
   }
   
   // If all endpoints fail, use mock data
-  console.log('All GitHub API endpoints failed, using enhanced mock data');
+  console.log('⚠️ All GitHub API endpoints failed, using enhanced mock data');
   return getEnhancedMockGitHubEvents();
 }
 
@@ -119,89 +141,31 @@ function getEnhancedMockGitHubEvents() {
   });
 }
 
-// Alternative: Try GitHub's RSS feed as JSON
-async function fetchGitHubTimelineAlternative() {
-  try {
-    console.log('Trying alternative GitHub feed...');
-    
-    // This is a more reliable endpoint
-    const response = await fetch('https://api.github.com/users/github/events?per_page=10', {
-      headers: {
-        'User-Agent': 'GitHub-Updates-Newsletter',
-        'Accept': 'application/vnd.github.v3+json'
-      }
-    });
-    
-    if (response.ok) {
-      const events = await response.json();
-      console.log(`Fetched ${events.length} events from alternative endpoint`);
-      return events;
-    }
-  } catch (error) {
-    console.error('Alternative GitHub API failed:', error.message);
-  }
-  
-  return getEnhancedMockGitHubEvents();
-}
+// REMOVED: fetchGitHubTimelineAlternative and getMockGitHubEvents functions (redundant)
 
-// Mock GitHub events for fallback
-function getMockGitHubEvents() {
-  const now = new Date();
-  return [
-    {
-      type: 'PushEvent',
-      actor: { login: 'developer123' },
-      repo: { name: 'awesome-project/react-app' },
-      created_at: now.toISOString()
-    },
-    {
-      type: 'CreateEvent', 
-      actor: { login: 'coder456' },
-      repo: { name: 'open-source/javascript-utils' },
-      created_at: new Date(now.getTime() - 3600000).toISOString()
-    },
-    {
-      type: 'WatchEvent',
-      actor: { login: 'github_user' },
-      repo: { name: 'popular-repo/vue-components' },
-      created_at: new Date(now.getTime() - 7200000).toISOString()
-    },
-    {
-      type: 'ForkEvent',
-      actor: { login: 'contributor' },
-      repo: { name: 'trending/python-tools' },
-      created_at: new Date(now.getTime() - 10800000).toISOString()
-    },
-    {
-      type: 'PullRequestEvent',
-      actor: { login: 'maintainer' },
-      repo: { name: 'community/nodejs-api' },
-      created_at: new Date(now.getTime() - 14400000).toISOString()
-    }
-  ];
-}
-
-// Format GitHub events for email
+// CORRECTED: Enhanced format function with better formatting and emojis
 function formatGitHubEvents(events) {
   const eventTypes = {
-    'PushEvent': 'pushed to',
-    'CreateEvent': 'created',
-    'WatchEvent': 'starred',
-    'ForkEvent': 'forked',
-    'IssuesEvent': 'worked on issues in',
-    'PullRequestEvent': 'created pull request in'
+    'PushEvent': '🚀 pushed to',
+    'CreateEvent': '✨ created',
+    'WatchEvent': '⭐ starred',
+    'ForkEvent': '🍴 forked',
+    'IssuesEvent': '🐛 opened issue in',
+    'PullRequestEvent': '🔄 created pull request in',
+    'ReleaseEvent': '🎉 released in',
+    'PublicEvent': '🌟 made public'
   };
 
   let formattedEvents = events.slice(0, 5).map(event => {
-    const action = eventTypes[event.type] || 'had activity in';
+    const action = eventTypes[event.type] || '💫 had activity in';
     const actor = event.actor.login;
     const repo = event.repo.name;
     const time = new Date(event.created_at).toLocaleString();
     
-    return `• ${actor} ${action} ${repo} at ${time}`;
+    return `${action} ${repo} by @${actor}`;
   }).join('\n');
 
-  return `Here are the latest GitHub activities:\n\n${formattedEvents}`;
+  return `🌟 Here are the latest GitHub activities:\n\n${formattedEvents}`;
 }
 
 // Enhanced email sending
@@ -217,7 +181,7 @@ async function sendGitHubUpdate(email, githubData) {
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
           <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">📊 GitHub Updates</h1>
+            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">🚀 GitHub Updates</h1>
             <p style="color: #e0e7ff; margin: 10px 0 0 0; font-size: 16px;">Latest activities from the developer community</p>
           </div>
           
@@ -231,7 +195,7 @@ async function sendGitHubUpdate(email, githubData) {
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center;">
               <p style="color: #64748b; font-size: 12px; margin: 0;">
                 You're receiving this because you subscribed to GitHub updates.<br>
-                Stay connected with the developer community!
+                Stay connected with the developer community! 💻
               </p>
             </div>
           </div>
@@ -240,11 +204,11 @@ async function sendGitHubUpdate(email, githubData) {
     };
 
     const result = await transporter.sendMail(mailOptions);
-    console.log(`Email sent successfully to ${email}: ${result.messageId}`);
+    console.log(`✅ Email sent successfully to ${email}: ${result.messageId}`);
     return result;
     
   } catch (error) {
-    console.error(`Failed to send email to ${email}:`, error.message);
+    console.error(`❌ Failed to send email to ${email}:`, error.message);
     throw error;
   }
 }
@@ -254,7 +218,7 @@ async function sendGitHubUpdate(email, githubData) {
 // Health check
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'GitHub Updates API is running!',
+    message: 'GitHub Updates API is running! 🚀',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
@@ -277,7 +241,7 @@ app.get('/api/test-db', async (req, res) => {
     }
     
     res.json({ 
-      message: 'Database connection successful', 
+      message: '✅ Database connection successful', 
       data,
       timestamp: new Date().toISOString()
     });
@@ -290,19 +254,20 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// Test GitHub API
+// CORRECTED: Enhanced GitHub API test endpoint
 app.get('/api/test-github', async (req, res) => {
   try {
     const githubData = await fetchGitHubTimeline();
     res.json({
-      message: 'GitHub API test successful',
+      message: githubData.length > 0 ? '✅ GitHub API test successful' : '⚠️ Using mock data',
       eventsCount: githubData.length,
-      sampleEvent: githubData[0] || null,
+      sampleEvents: githubData.slice(0, 3) || [], // Show multiple samples
+      hasRealData: githubData[0]?.actor?.login && !['octocat', 'torvalds', 'gaearon'].includes(githubData[0].actor.login),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     res.status(500).json({
-      error: 'GitHub API test failed',
+      error: '❌ GitHub API test failed',
       details: error.message
     });
   }
@@ -317,7 +282,7 @@ app.post('/api/signup', async (req, res) => {
       return res.status(400).json({ message: 'Valid email is required' });
     }
 
-    console.log(`Attempting to subscribe email: ${email}`);
+    console.log(`📧 Attempting to subscribe email: ${email}`);
 
     // Check if email already exists
     const { data: existingUser, error: selectError } = await supabase
@@ -356,20 +321,20 @@ app.post('/api/signup', async (req, res) => {
       });
     }
 
-    console.log(`Successfully subscribed: ${email}`);
+    console.log(`✅ Successfully subscribed: ${email}`);
 
     // Fetch GitHub data and send welcome email
     try {
       const githubData = await fetchGitHubTimeline();
       await sendGitHubUpdate(email, githubData);
-      console.log(`Welcome email sent to: ${email}`);
+      console.log(`📬 Welcome email sent to: ${email}`);
     } catch (emailError) {
       console.error('Email error:', emailError);
       // Don't fail the signup if email fails
     }
 
     res.json({ 
-      message: 'Successfully subscribed!', 
+      message: '✅ Successfully subscribed!', 
       subscriber: data[0] 
     });
 
@@ -412,7 +377,7 @@ app.post('/api/send-updates', async (req, res) => {
     }
 
     res.json({ 
-      message: `Updates sent to ${sent} subscribers`,
+      message: `📬 Updates sent to ${sent} subscribers`,
       total: subscribers.length,
       sent,
       failed
@@ -443,8 +408,8 @@ app.post('/api/unsubscribe', async (req, res) => {
       return res.status(500).json({ message: 'Database error' });
     }
 
-    console.log(`Successfully unsubscribed: ${email}`);
-    res.json({ message: 'Successfully unsubscribed' });
+    console.log(`👋 Successfully unsubscribed: ${email}`);
+    res.json({ message: '👋 Successfully unsubscribed' });
   } catch (error) {
     console.error('Unsubscribe error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -475,7 +440,7 @@ app.get('/api/stats', async (req, res) => {
 
 // Cron job for daily updates (runs every day at 9 AM UTC)
 cron.schedule('0 9 * * *', async () => {
-  console.log('Running daily GitHub updates cron job...');
+  console.log('⏰ Running daily GitHub updates cron job...');
   
   try {
     const { data: subscribers } = await supabase
@@ -488,7 +453,7 @@ cron.schedule('0 9 * * *', async () => {
       return;
     }
 
-    console.log(`Found ${subscribers.length} active subscribers`);
+    console.log(`📧 Found ${subscribers.length} active subscribers`);
     const githubData = await fetchGitHubTimeline();
     
     let sent = 0;
@@ -506,7 +471,7 @@ cron.schedule('0 9 * * *', async () => {
       }
     }
 
-    console.log(`Daily updates completed - Sent: ${sent}, Failed: ${failed}`);
+    console.log(`✅ Daily updates completed - Sent: ${sent}, Failed: ${failed}`);
   } catch (error) {
     console.error('Cron job error:', error);
   }
