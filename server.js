@@ -13,20 +13,21 @@ const PORT = process.env.PORT || 3001;
 app.use(cors({
   origin: [
     'http://localhost:3000',                    // For local development
-    'https://github-updates-frontend.vercel.app/',   // Replace with your actual Vercel URL
+    'https://github-updates-frontend.vercel.app',   // Remove trailing slash
+    'https://github-updates-frontend.vercel.app/', // Keep this for compatibility
   ],
   credentials: true
 }));
 app.use(express.json());
 
-// Supabase client
+// Supabase client - IMPORTANT: Use SERVICE_ROLE key for backend operations
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY // Changed from SUPABASE_KEY to SUPABASE_SERVICE_ROLE_KEY
 );
 
 // Email transporter (using Gmail as example)
-const transporter = nodemailer.createTransport({
+const transporter = nodemailer.createTransporter({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
@@ -105,6 +106,26 @@ app.get('/', (req, res) => {
   res.json({ message: 'GitHub Updates API is running!' });
 });
 
+// Test Supabase connection
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('subscribers')
+      .select('count(*)')
+      .limit(1);
+    
+    if (error) {
+      console.error('Database test error:', error);
+      return res.status(500).json({ error: 'Database connection failed', details: error });
+    }
+    
+    res.json({ message: 'Database connection successful', data });
+  } catch (error) {
+    console.error('Database test error:', error);
+    res.status(500).json({ error: 'Database test failed', details: error.message });
+  }
+});
+
 // Signup endpoint
 app.post('/api/signup', async (req, res) => {
   try {
@@ -114,12 +135,19 @@ app.post('/api/signup', async (req, res) => {
       return res.status(400).json({ message: 'Valid email is required' });
     }
 
+    console.log(`Attempting to subscribe email: ${email}`);
+
     // Check if email already exists
-    const { data: existingUser } = await supabase
+    const { data: existingUser, error: selectError } = await supabase
       .from('subscribers')
       .select('email')
       .eq('email', email)
       .single();
+
+    if (selectError && selectError.code !== 'PGRST116') { // PGRST116 means no rows returned
+      console.error('Error checking existing user:', selectError);
+      return res.status(500).json({ message: 'Database error during email check' });
+    }
 
     if (existingUser) {
       return res.status(400).json({ message: 'Email already subscribed' });
@@ -139,13 +167,20 @@ app.post('/api/signup', async (req, res) => {
 
     if (error) {
       console.error('Supabase error:', error);
-      return res.status(500).json({ message: 'Database error' });
+      return res.status(500).json({ 
+        message: 'Database error during insertion',
+        error: error.message,
+        code: error.code
+      });
     }
+
+    console.log(`Successfully subscribed: ${email}`);
 
     // Fetch GitHub data and send welcome email
     try {
       const githubData = await fetchGitHubTimeline();
       await sendGitHubUpdate(email, githubData);
+      console.log(`Welcome email sent to: ${email}`);
     } catch (emailError) {
       console.error('Email error:', emailError);
       // Don't fail the signup if email fails
@@ -158,7 +193,7 @@ app.post('/api/signup', async (req, res) => {
 
   } catch (error) {
     console.error('Signup error:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({ message: 'Internal server error', details: error.message });
   }
 });
 
@@ -255,6 +290,9 @@ cron.schedule('0 9 * * *', async () => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Supabase URL configured: ${!!process.env.SUPABASE_URL}`);
+  console.log(`Supabase Service Role Key configured: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
 });
 
 module.exports = app;
